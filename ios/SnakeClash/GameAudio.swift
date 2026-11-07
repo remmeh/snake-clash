@@ -33,20 +33,27 @@ final class GameAudio: NSObject {
     private var soundAllowed: Bool { isEnabled && !interrupted && !backgrounded }
     private var canPlay: Bool { soundAllowed && wantsPlayback }
 
+    private func player(named name: String) throws -> AVAudioPlayer {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "wav", subdirectory: "Audio") else {
+            throw NSError(domain: "SnakeClash.Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing audio: " + name])
+        }
+        return try AVAudioPlayer(contentsOf: url)
+    }
+
     private func prepare() throws {
         guard ambient == nil else { return }
         // Ambient respects the iPad's Silent Mode and lets other apps keep their music.
         try AVAudioSession.sharedInstance().setCategory(.ambient)
-        let bed = try AVAudioPlayer(data: SoundSynthesis.ambient())
+        let bed = try player(named: "ambient")
         bed.numberOfLoops = -1; bed.volume = 0.6; bed.prepareToPlay()
         var voices: [AVAudioPlayer] = []
-        for frequency in [659.25, 739.99, 880.0, 987.77, 1108.73, 880.0] {
-            let voice = try AVAudioPlayer(data: SoundSynthesis.dot(frequency: frequency))
+        for index in 0..<6 {
+            let voice = try player(named: "dot-\(index)")
             voice.volume = 0.55; voice.prepareToPlay(); voices.append(voice)
         }
-        let chomp = try AVAudioPlayer(data: SoundSynthesis.snake())
+        let chomp = try player(named: "snake")
         chomp.volume = 0.65; chomp.prepareToPlay()
-        let death = try AVAudioPlayer(data: SoundSynthesis.death())
+        let death = try player(named: "death")
         death.volume = 0.65; death.prepareToPlay()
         ambient = bed; dotVoices = voices; snakeVoice = chomp; deathVoice = death
     }

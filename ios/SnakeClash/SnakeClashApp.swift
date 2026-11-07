@@ -13,7 +13,50 @@ private let palette: [(String, UIColor)] = [
 
 @main
 struct SnakeClashApp: App {
-    var body: some Scene { WindowGroup { NativeGameView().preferredColorScheme(.dark) } }
+    var body: some Scene { WindowGroup { StartupView().preferredColorScheme(.dark) } }
+}
+
+private struct LoadingView: View {
+    var body: some View {
+        ZStack {
+            Color(red: 0.085, green: 0.11, blue: 0.17).ignoresSafeArea()
+            VStack(spacing: 24) {
+                Image(systemName: "scribble.variable").font(.system(size: 68, weight: .bold)).foregroundStyle(.purple)
+                Text("SNAKE CLASH").font(.system(size: 26, weight: .bold, design: .rounded)).tracking(4)
+                ProgressView().tint(.white).controlSize(.large)
+                Text("Getting your arena ready…").foregroundStyle(.secondary)
+            }
+        }.statusBarHidden(true)
+    }
+}
+
+private final class StartupLoader: ObservableObject {
+    @Published var game: GameController?
+    private var started = false
+    func load() {
+        guard !started else { return }
+        started = true
+        let loadingDeadline = ProcessInfo.processInfo.systemUptime + 0.8
+        DispatchQueue.global(qos: .userInitiated).async {
+            let world = GameWorld()
+            let restored = UserDefaults.standard.data(forKey: "saved-round-v1").map { world.restore(from: $0) } ?? false
+            DispatchQueue.main.async {
+                self.game = GameController(world: world, restored: restored, loadingDeadline: loadingDeadline)
+            }
+        }
+    }
+}
+
+private struct StartupView: View {
+    @StateObject private var loader = StartupLoader()
+    var body: some View {
+        ZStack {
+            if let game = loader.game {
+                NativeGameView(game: game)
+
+            } else { LoadingView() }
+        }.onAppear { loader.load() }
+    }
 }
 
 final class GameController: ObservableObject {
@@ -29,13 +72,27 @@ final class GameController: ObservableObject {
     }
     private let audio = GameAudio()
 
-    init() {
+    private let loadingDeadline: TimeInterval
+    private var startupCompletionScheduled = false
+
+    init(world: GameWorld, restored: Bool, loadingDeadline: TimeInterval) {
+        self.loadingDeadline = loadingDeadline
+        self.world = world
         audio.isEnabled = soundEnabled
-        if let data = UserDefaults.standard.data(forKey: "saved-round-v1"),
-           world.restore(from: data) {
+        if restored {
             mode = .paused
             score = world.score; energy = world.energy; eaten = world.eaten
             message = "Welcome back. Your snacks are waiting!"
+        }
+    }
+
+    func finishStartup() {
+        guard !startupCompletionScheduled else { return }
+        startupCompletionScheduled = true
+        let remaining = max(0, loadingDeadline - ProcessInfo.processInfo.systemUptime)
+        // Keep a quick launch readable without delaying any initialization work.
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+            self?.sceneReady = true
         }
     }
 
@@ -63,7 +120,8 @@ final class GameController: ObservableObject {
     @Published var selectedColor = min(palette.count - 1, max(0, UserDefaults.standard.integer(forKey: "snake-color"))) {
         didSet { UserDefaults.standard.set(selectedColor, forKey: "snake-color") }
     }
-    let world = GameWorld()
+    let world: GameWorld
+    @Published var sceneReady = false
     var boosting = false
     lazy var scene: ArenaScene = {
         let result = ArenaScene(size: CGSize(width: 1200, height: 900))
@@ -72,6 +130,7 @@ final class GameController: ObservableObject {
         return result
     }()
     func start() {
+        boosting = false
         world.reset(); scene.resetControls(); score = 0; eaten = 0; energy = 1
         message = "Drag anywhere to steer. Eat smaller snakes!"; mode = .playing
         saveProgress()
@@ -100,9 +159,10 @@ final class GameController: ObservableObject {
 }
 
 struct NativeGameView: View {
-    @StateObject private var game = GameController()
+    @ObservedObject var game: GameController
     @Environment(\.scenePhase) private var phase
     @State private var showHelp = false
+    @State private var confirmNewGame = false
     private let gold = Color(red: 1, green: 0.83, blue: 0.43)
 
     var body: some View {
@@ -171,11 +231,18 @@ struct NativeGameView: View {
                     }
                 }.padding(.horizontal, geometry.size.width > 600 ? 30 : 18).padding(.top, 18).padding(.bottom, 24)
                 if game.mode != .playing { menu }
+                if !game.sceneReady { LoadingView() }
             }
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .onChange(of: phase) { _, value in if value != .active { game.pause() } }
+        .alert("Start a new game?", isPresented: $confirmNewGame) {
+            Button("Cancel", role: .cancel) {}
+            Button("New Game", role: .destructive) { game.start() }
+        } message: {
+            Text("This replaces your current saved round. Your best score, color, and sound settings will stay.")
+        }
         .sheet(isPresented: $showHelp) {
             VStack(alignment: .leading, spacing: 24) {
                 Text("Welcome to the food chain.").font(.system(size: 32, weight: .bold, design: .rounded))
@@ -225,11 +292,20 @@ struct NativeGameView: View {
                     }.padding(.vertical, 3)
                 }
                 Button { game.mode == .paused ? game.resume() : game.start() } label: {
-                    HStack { Spacer(); Text(game.mode == .paused ? "Keep on snacking" : game.mode == .over ? "Play again" : "Let’s get hungry"); Spacer(); Image(systemName: "arrow.up.right") }
+                    HStack { Spacer(); Text(game.mode == .paused ? "Keep on snacking" : "New Game"); Spacer(); Image(systemName: "arrow.up.right") }
                         .font(.system(size: 17, weight: .bold, design: .rounded)).padding(18)
                         .background(Color(palette[game.selectedColor].1), in: RoundedRectangle(cornerRadius: 16))
                         .foregroundStyle(Color(red: 0.12, green: 0.14, blue: 0.2))
                 }.buttonStyle(.plain)
+                if game.mode == .paused {
+                    Button { confirmNewGame = true } label: {
+                        Label("New Game", systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                    }.buttonStyle(.plain)
+                        .accessibilityHint("Replaces the current round with a fresh game. Keeps your best score.")
+                }
                 HStack(spacing: 12) {
                     soundButton
                     Text(game.soundEnabled ? "SOUND ON" : "SOUND OFF")
@@ -317,6 +393,9 @@ final class ArenaScene: SKScene {
             render()
             needsRender = false
             lastRenderColor = game.selectedColor
+            if !game.sceneReady {
+                game.finishStartup()
+            }
         }
     }
 
@@ -353,7 +432,7 @@ final class ArenaScene: SKScene {
             if let existing = snakeNodes[snake.id] { visual = existing }
             else { visual = SnakeVisual(); snakeNodes[snake.id] = visual; snakeLayer.addChild(visual.root) }
             let color = snake.id == 0 ? palette[game.selectedColor].1 : palette[snake.colorIndex].1
-            visual.draw(snake, color: color, map: screen)
+            visual.draw(snake, color: color, dangerous: snake.id != 0 && snake.mass > world.player.mass * 1.08, map: screen)
         }
     }
 
@@ -390,16 +469,32 @@ final class ArenaScene: SKScene {
 
 private final class SnakeVisual {
     let root = SKNode()
-    private let body = SKShapeNode()
-    private let stripe = SKShapeNode()
-    private let head = SKShapeNode()
+    private let body = SKNode()
+    private let dangerLayer = SKNode()
+    private var dangerSegments: [SKSpriteNode] = []
+    private var segments: [SKSpriteNode] = []
+    private let head = SKSpriteNode()
+    private static var textures: [UIColor: SKTexture] = [:]
+
+    private static func texture(for color: UIColor) -> SKTexture {
+        if let cached = textures[color] { return cached }
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
+            color.setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 2, y: 2, width: 60, height: 60))
+        }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .linear
+        textures[color] = texture
+        return texture
+    }
     private let face = SKNode()
     private let label = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
     private let shield = SKShapeNode()
 
     init() {
-        root.addChild(body); root.addChild(stripe); root.addChild(head); root.addChild(face); root.addChild(label); root.addChild(shield)
-        body.lineCap = .round; body.lineJoin = .round; stripe.lineCap = .round; stripe.lineJoin = .round
+        dangerLayer.zPosition = -1; root.addChild(dangerLayer)
+        root.addChild(body); root.addChild(head); root.addChild(face); root.addChild(label); root.addChild(shield)
+        head.zPosition = 1; face.zPosition = 2; label.zPosition = 3; shield.zPosition = 3
         label.fontSize = 11; label.fontColor = UIColor.white.withAlphaComponent(0.6)
         for side in [-1.0, 1.0] {
             let eye = SKShapeNode(circleOfRadius: 4.5); eye.fillColor = .white; eye.strokeColor = .clear
@@ -409,28 +504,53 @@ private final class SnakeVisual {
         }
         shield.fillColor = .clear; shield.strokeColor = UIColor.white.withAlphaComponent(0.3); shield.lineWidth = 1
     }
-    func draw(_ snake: Snake, color: UIColor, map: (Point) -> CGPoint) {
-        let path = CGMutablePath()
+    func draw(_ snake: Snake, color: UIColor, dangerous: Bool, map: (Point) -> CGPoint) {
         let headPoint = map(snake.position)
-        path.move(to: headPoint)
-        var previous = headPoint
-        // The trail is spaced three points apart; nine-point drawing segments
-        // retain its curve while reducing per-frame path tessellation.
-        for index in stride(from: 0, to: snake.trail.count, by: 3) {
-            let p = map(snake.trail[index])
-            if hypot(p.x - previous.x, p.y - previous.y) > 100 { path.move(to: p) } else { path.addLine(to: p) }
-            previous = p
+        let texture = Self.texture(for: color)
+        // Overlapping opaque discs form the body without triangulating a thick,
+        // self-intersecting stroke. Tight turns and world seams cannot create spikes.
+        let spacing = max(1, min(3, Int(snake.radius / 6)))
+        var indices = Array(stride(from: 0, to: snake.trail.count, by: spacing))
+        if let last = snake.trail.indices.last, indices.last != last { indices.append(last) }
+        while segments.count < indices.count {
+            let segment = SKSpriteNode(texture: texture)
+            body.addChild(segment)
+            segments.append(segment)
         }
-        if let tail = snake.trail.last {
-            let end = map(tail)
-            if hypot(end.x - previous.x, end.y - previous.y) < 100 { path.addLine(to: end) }
+        for index in segments.indices {
+            let segment = segments[index]
+            segment.isHidden = index >= indices.count
+            guard index < indices.count else { continue }
+            segment.texture = texture
+            segment.position = map(snake.trail[indices[index]])
+            // The 2-pixel transparent border keeps antialiasing inside the texture.
+            let diameter = snake.radius * 2 * 64 / 60
+            segment.size = CGSize(width: diameter, height: diameter)
         }
-        body.path = path; body.strokeColor = color; body.lineWidth = snake.radius * 2
-        stripe.path = path; stripe.strokeColor = UIColor.white.withAlphaComponent(0.13); stripe.lineWidth = snake.radius * 0.8
-        head.path = CGPath(ellipseIn: CGRect(x: -snake.radius, y: -snake.radius, width: snake.radius * 2, height: snake.radius * 2), transform: nil)
-        head.fillColor = color; head.strokeColor = .clear; head.position = headPoint
+        dangerLayer.isHidden = !dangerous
+        if dangerous {
+            let red = Self.texture(for: UIColor(red: 1, green: 0.25, blue: 0.28, alpha: 1))
+            while dangerSegments.count < indices.count + 1 {
+                let outline = SKSpriteNode(texture: red)
+                dangerLayer.addChild(outline); dangerSegments.append(outline)
+            }
+            for index in dangerSegments.indices {
+                let outline = dangerSegments[index]
+                outline.isHidden = index > indices.count
+                guard index <= indices.count else { continue }
+                outline.position = index == indices.count ? headPoint : segments[index].position
+                let diameter = (snake.radius + 4) * 2 * 64 / 60
+                outline.size = CGSize(width: diameter, height: diameter)
+                outline.alpha = 0.85
+            }
+        }
+        head.texture = texture
+        let diameter = snake.radius * 2 * 64 / 60
+        head.size = CGSize(width: diameter, height: diameter)
+        head.position = headPoint
         face.position = headPoint; face.zRotation = snake.angle; face.setScale(snake.radius / 13)
-        label.text = snake.id == 0 ? "YOU" : snake.name; label.position = CGPoint(x: headPoint.x, y: headPoint.y + snake.radius + 14)
+        label.fontColor = dangerous ? .systemRed : UIColor.white.withAlphaComponent(0.6)
+        label.text = snake.id == 0 ? "YOU" : snake.name + (dangerous ? " · BIGGER" : ""); label.position = CGPoint(x: headPoint.x, y: headPoint.y + snake.radius + 14)
         shield.path = CGPath(ellipseIn: CGRect(x: -snake.radius - 7, y: -snake.radius - 7, width: (snake.radius + 7) * 2, height: (snake.radius + 7) * 2), transform: nil)
         shield.position = headPoint; shield.isHidden = snake.id != 0 || snake.protection <= 0
         root.zPosition = snake.mass

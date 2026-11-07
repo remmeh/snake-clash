@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+ A00000000000000000000007 = {isa = PBXBuildFile; fileRef = A00000000000000000000008; };
 		A00000000000000000000005 = {isa = PBXBuildFile; fileRef = A00000000000000000000006; };
 		A00000000000000000000003 = {isa = PBXBuildFile; fileRef = A00000000000000000000004; };
 		A00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000002; };
@@ -16,6 +17,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+ A00000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = folder; path = Audio; sourceTree = "<group>"; };
 		A00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundSynthesis.swift; sourceTree = "<group>"; };
 		A00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameAudio.swift; sourceTree = "<group>"; };
 		A00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameWorld.swift; sourceTree = "<group>"; };
@@ -62,6 +64,7 @@
 				A00000000000000000000006,
 				000000000000000000000011 /* Info.plist */,
 				000000000000000000000012 /* Assets.xcassets */,
+ A00000000000000000000008,
 				000000000000000000000014 /* Game */,
 			);
 			path = SnakeClash;
@@ -126,6 +129,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000013 /* Assets.xcassets in Resources */,
+ A00000000000000000000007,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

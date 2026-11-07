@@ -66,3 +66,8 @@ The native app saves an active round every ten seconds and whenever it pauses or
 Xcode updates using the same bundle identifier preserve these local saves, best score, color, and mute preference. Deleting the app or changing its bundle identifier does not carry that data over. A force quit can lose up to ten seconds of active play.
 
 Rendering uses a shared dot/glow texture for food and bursts, fewer snake path segments, and skips rebuilding a stationary arena. Collision comparisons avoid repeated square roots; HUD values only publish when changed. Physical-device frame-rate measurements are still needed to quantify the improvement.
+
+
+Startup now displays a branded loading view until the first arena frame is ready. Saved-round decoding and world setup run off the UI thread. Synthesized audio is bundled as WAV files, avoiding waveform generation when Play is tapped. The initial iPad launch background matches the arena.
+
+Rivals large enough to eat the player have a red body outline and a BIGGER label. The warning disappears as the player grows past that threshold. Starting a new game from a paused or restored round requires confirmation.
