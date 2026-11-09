@@ -71,6 +71,40 @@ enum SoundSynthesis {
         }
     }
 
+    static func powerUp(_ kind: PowerKind) -> Data {
+        let notes: [Double]
+        switch kind {
+        case .ghost: notes = [880, 659.25, 523.25]
+        case .dash: notes = [220, 440, 880]
+        case .bigBite: notes = [130.81, 196, 261.63]
+        case .magnet: notes = [659.25, 440, 659.25, 880]
+        case .shield: notes = [523.25, 783.99, 1046.5]
+        case .quickTurn: notes = [587.33, 880, 587.33, 1174.66]
+        case .appetite: notes = [783.99, 987.77, 1174.66]
+        case .chill: notes = [1396.91, 1046.5, 698.46]
+        }
+        return wave(duration: 0.5) { t in
+            var value = 0.0
+            for (index, note) in notes.enumerated() {
+                let local = t - Double(index) * 0.065
+                if local >= 0 {
+                    let envelope = min(1, local / 0.008) * exp(-local * 12) * min(1, (0.5 - t) / 0.05)
+                    let shimmer = kind == .ghost ? 0.7 + 0.3 * cos(tau * 12 * local) : 1
+                    value += envelope * shimmer * (sin(tau * note * local) * 0.22 + sin(tau * note * 2 * local) * 0.04)
+                }
+            }
+            return value
+        }
+    }
+
+    static func shieldBreak() -> Data {
+        wave(duration: 0.28) { t in
+            let envelope = min(1, t / 0.003) * exp(-t * 20) * min(1, (0.28 - t) / 0.04)
+            let phase = tau * (520 * t - 600 * t * t)
+            return envelope * (sin(phase) * 0.4 + sin(phase * 2.7) * 0.1)
+        }
+    }
+
     private static func wave(duration: Double, sample: (Double) -> Double) -> Data {
         let count = Int(Double(sampleRate) * duration)
         var data = Data()

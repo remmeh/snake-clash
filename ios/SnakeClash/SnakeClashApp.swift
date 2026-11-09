@@ -107,10 +107,19 @@ final class GameController: ObservableObject {
         }
     }
 
+    func playPowerSounds(at time: Double) {
+        let sounds = world.powerSounds
+        world.powerSounds.removeAll()
+        guard !world.isOver else { return }
+        // A shield break takes priority if pickup and collision happen together.
+        if let sound = sounds.last { audio.playPower(sound, at: time) }
+    }
+
     func playCollectionSounds(at time: Double) {
         if !world.events.isEmpty { audio.eatSnake(at: time) }
         else if world.collectedDots > 0 { audio.collectDot(at: time) }
     }
+    @Published var powerStatus = ""
     @Published var score = 0
     @Published var best = UserDefaults.standard.integer(forKey: "native-best")
     @Published var energy = 1.0
@@ -142,6 +151,9 @@ final class GameController: ObservableObject {
     }
     func resume() { guard mode == .paused else { return }; scene.resetControls(); mode = .playing }
     func refresh() {
+        let status = world.player.power.map { "\($0.kind.symbol) \($0.kind.title) · \(Int(ceil($0.remaining)))s" } ?? ""
+        let slow = (world.player.slowedFor ?? 0) > 0 ? " ❄ SLOWED" : ""
+        if powerStatus != status + slow { powerStatus = status + slow }
         if score != world.score { score = world.score }
         if energy != world.energy { energy = world.energy }
         if eaten != world.eaten { eaten = world.eaten }
@@ -178,6 +190,9 @@ struct NativeGameView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("YOUR SCORE").font(.system(size: 10, weight: .bold, design: .rounded)).tracking(2).foregroundStyle(.white.opacity(0.5))
                                 Text(game.score.formatted()).font(.system(size: 32, weight: .bold, design: .rounded)).monospacedDigit()
+                                if !game.powerStatus.isEmpty {
+                                    Text(game.powerStatus).font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(gold)
+                                }
                             }
                         }.padding(18).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
                         Spacer()
@@ -250,6 +265,9 @@ struct NativeGameView: View {
                 Label("Eat smaller snakes. They burst into yellow balls!", systemImage: "sparkles")
                 Label("Collect the balls to grow. Avoid bigger snakes.", systemImage: "arrow.up.right")
                 Label("Hold BOOST with another finger to dash.", systemImage: "bolt.fill")
+                Text("Floating power-ups last 3–10 seconds. One at a time, then a 4-second cooldown. Ghost hides you from rivals, but collisions still count.")
+                Text("⚡ Dash · 🎈 Double size · 🧲 Magnet · 🛡 Shield · 🌀 Quick Turn · ✨ Extra growth · ❄ Slow nearby rivals")
+                    .font(.callout).foregroundStyle(.secondary)
                 Text("Your own tail is safe. The arena wraps at the edges. Choose your snake’s color before every round.").foregroundStyle(.secondary)
                 Button("Let’s play") { showHelp = false }.buttonStyle(.borderedProminent).tint(Color(palette[game.selectedColor].1))
             }.padding(36).presentationDetents([.medium, .large])
@@ -332,6 +350,8 @@ final class ArenaScene: SKScene {
     private let foodLayer = SKNode()
     private let snakeLayer = SKNode()
     private let effectLayer = SKNode()
+    private let pickupLayer = SKNode()
+    private var pickupNodes: [UUID: SKNode] = [:]
     private let stick = SKShapeNode(circleOfRadius: 48)
     private let knob = SKShapeNode(circleOfRadius: 20)
     private var foodNodes: [Int: SKSpriteNode] = [:]
@@ -356,7 +376,7 @@ final class ArenaScene: SKScene {
     override func didMove(to view: SKView) {
         backgroundColor = UIColor(red: 0.085, green: 0.11, blue: 0.17, alpha: 1)
         guard grid.parent == nil else { return }
-        addChild(grid); addChild(foodLayer); addChild(snakeLayer); addChild(effectLayer)
+        addChild(grid); addChild(foodLayer); addChild(pickupLayer); addChild(snakeLayer); addChild(effectLayer)
         grid.strokeColor = UIColor.white.withAlphaComponent(0.05); grid.lineWidth = 1
         stick.fillColor = UIColor.white.withAlphaComponent(0.04); stick.strokeColor = UIColor.white.withAlphaComponent(0.2)
         knob.fillColor = UIColor.white.withAlphaComponent(0.2); knob.strokeColor = UIColor.white.withAlphaComponent(0.2)
@@ -380,7 +400,13 @@ final class ArenaScene: SKScene {
             if !game.world.isOver && currentTime - saveTime >= 10 {
                 game.saveProgress(); saveTime = currentTime
             }
+            game.playPowerSounds(at: currentTime)
             if !game.world.isOver { game.playCollectionSounds(at: currentTime) }
+            if let message = game.world.powerMessage {
+                game.message = message; game.world.powerMessage = nil
+                messageUntil = currentTime + 3
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
             if !game.world.events.isEmpty {
                 for event in game.world.events { burst(at: screen(event.position)); game.message = "\(event.name) → \(event.count) yellow bites!" }
                 game.world.events.removeAll(); messageUntil = currentTime + 3
@@ -426,13 +452,38 @@ final class ArenaScene: SKScene {
                 node.position = point; foodLayer.addChild(node); foodNodes[bite.id] = node
             }
         }
+        let activePickups = Set(world.pickups.map(\.id))
+        for id in Array(pickupNodes.keys) where !activePickups.contains(id) {
+            pickupNodes.removeValue(forKey: id)?.removeFromParent()
+        }
+        for pickup in world.pickups {
+            let node: SKNode
+            if let existing = pickupNodes[pickup.id] { node = existing }
+            else {
+                node = SKNode()
+                let ring = SKShapeNode(circleOfRadius: 19)
+                ring.fillColor = UIColor(red: 0.12, green: 0.18, blue: 0.28, alpha: 0.95)
+                ring.strokeColor = .systemCyan; ring.lineWidth = 2; ring.glowWidth = 3
+                node.addChild(ring)
+                let symbol = SKLabelNode(text: pickup.kind.symbol)
+                symbol.fontSize = 23; symbol.verticalAlignmentMode = .center
+                node.addChild(symbol)
+                let title = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
+                title.text = pickup.kind.title; title.fontSize = 10
+                title.fontColor = .systemCyan; title.position.y = 28; node.addChild(title)
+                pickupLayer.addChild(node); pickupNodes[pickup.id] = node
+            }
+            node.position = screen(pickup.position)
+            node.setScale(1 + sin(world.time * 2) * 0.06)
+            node.alpha = pickup.lifetime < 5 ? 0.55 + 0.45 * abs(sin(world.time * 4)) : 1
+        }
         for snake in world.snakes {
             if !snake.alive { snakeNodes.removeValue(forKey: snake.id)?.root.removeFromParent(); continue }
             let visual: SnakeVisual
             if let existing = snakeNodes[snake.id] { visual = existing }
             else { visual = SnakeVisual(); snakeNodes[snake.id] = visual; snakeLayer.addChild(visual.root) }
             let color = snake.id == 0 ? palette[game.selectedColor].1 : palette[snake.colorIndex].1
-            visual.draw(snake, color: color, dangerous: snake.id != 0 && snake.mass > world.player.mass * 1.08, map: screen)
+            visual.draw(snake, color: color, dangerous: snake.id != 0 && snake.effectiveMass > world.player.effectiveMass * 1.08, map: screen)
         }
     }
 
@@ -506,6 +557,7 @@ private final class SnakeVisual {
     }
     func draw(_ snake: Snake, color: UIColor, dangerous: Bool, map: (Point) -> CGPoint) {
         let headPoint = map(snake.position)
+        root.alpha = snake.power?.kind == .ghost ? 0.35 : 1
         let texture = Self.texture(for: color)
         // Overlapping opaque discs form the body without triangulating a thick,
         // self-intersecting stroke. Tight turns and world seams cannot create spikes.
@@ -550,9 +602,14 @@ private final class SnakeVisual {
         head.position = headPoint
         face.position = headPoint; face.zRotation = snake.angle; face.setScale(snake.radius / 13)
         label.fontColor = dangerous ? .systemRed : UIColor.white.withAlphaComponent(0.6)
-        label.text = snake.id == 0 ? "YOU" : snake.name + (dangerous ? " · BIGGER" : ""); label.position = CGPoint(x: headPoint.x, y: headPoint.y + snake.radius + 14)
+        let effect = snake.power.map { " \($0.kind.symbol) \(Int(ceil($0.remaining)))s" } ?? ""
+        let slow = (snake.slowedFor ?? 0) > 0 ? " ❄" : ""
+        label.text = (snake.id == 0 ? "YOU" : snake.name + (dangerous ? " · BIGGER" : "")) + effect + slow; label.position = CGPoint(x: headPoint.x, y: headPoint.y + snake.radius + 14)
         shield.path = CGPath(ellipseIn: CGRect(x: -snake.radius - 7, y: -snake.radius - 7, width: (snake.radius + 7) * 2, height: (snake.radius + 7) * 2), transform: nil)
-        shield.position = headPoint; shield.isHidden = snake.id != 0 || snake.protection <= 0
+        shield.position = headPoint
+        shield.strokeColor = snake.power?.kind == .shield ? .systemCyan : UIColor.white.withAlphaComponent(0.3)
+        shield.lineWidth = snake.power?.kind == .shield ? 3 : 1
+        shield.isHidden = snake.power?.kind != .shield && snake.protection <= 0
         root.zPosition = snake.mass
     }
 }

@@ -71,3 +71,19 @@ Rendering uses a shared dot/glow texture for food and bursts, fewer snake path s
 Startup now displays a branded loading view until the first arena frame is ready. Saved-round decoding and world setup run off the UI thread. Synthesized audio is bundled as WAV files, avoiding waveform generation when Play is tapped. The initial iPad launch background matches the arena.
 
 Rivals large enough to eat the player have a red body outline and a BIGGER label. The warning disappears as the player grows past that threshold. Starting a new game from a paused or restored round requires confirmation.
+
+
+## Power-ups
+
+Up to six labeled pickups drift around the arena. A new one can spawn every 12 seconds; uncollected pickups expire after 45 seconds. Big Bite has one quarter the spawn weight of each other kind. Players and rivals can collect them. Only one power can be active, pickups cannot refresh its timer, and a four-second cooldown follows expiry or shield use.
+
+- Ghost: six seconds of AI invisibility; collisions still count.
+- Super Dash: five seconds at 1.6× speed, without energy drain or boost stacking.
+- Big Bite: five seconds at twice the combat mass and visibly larger radius. Collected growth stays after expiry.
+- Snack Magnet: eight seconds pulling food within 150 arena points.
+- Bubble Shield: absorbs one lethal collision within ten seconds, then grants 1.5 seconds to escape.
+- Quick Turn: seven seconds of twice the turning speed.
+- Golden Appetite: six seconds of 50% extra growth from food only.
+- Chill Burst: slows rivals within 260 arena points by 25% for three seconds.
+
+Active effects and countdowns appear above snakes and in the player's score panel. Ghost becomes translucent, Shield has a cyan ring, and Big Bite updates red danger outlines. All durations use simulation time, so pausing freezes them. Pickups, effects, cooldowns and chill timers survive saving; older saves remain compatible.

@@ -11,6 +11,7 @@ final class GameAudio: NSObject {
     private var dotVoices: [AVAudioPlayer] = []
     private var snakeVoice: AVAudioPlayer?
     private var deathVoice: AVAudioPlayer?
+    private var powerVoice: AVAudioPlayer?
     private var voiceIndex = 0
     private var lastDot = -Double.infinity
 
@@ -60,6 +61,7 @@ final class GameAudio: NSObject {
 
     private func synchronize() {
         deathVoice?.stop(); deathVoice?.currentTime = 0
+        powerVoice?.stop(); powerVoice?.currentTime = 0
         guard canPlay else {
             ambient?.pause()
             dotVoices.forEach { $0.stop(); $0.currentTime = 0 }
@@ -89,6 +91,28 @@ final class GameAudio: NSObject {
         guard canPlay else { return }
         lastDot = time + 0.15
         snakeVoice?.currentTime = 0; snakeVoice?.play()
+    }
+
+    func playPower(_ event: PowerSound, at time: Double) {
+        guard canPlay else { return }
+        let name: String
+        switch event {
+        case .pickup(let kind): name = "power-" + kind.rawValue
+        case .shieldBreak: name = "shield-break"
+        }
+        do {
+            let voice = try player(named: name)
+            voice.volume = 0.7
+            powerVoice?.stop()
+            powerVoice = voice
+            dotVoices.forEach { $0.stop() }
+            lastDot = time + 0.2
+            voice.play()
+        } catch {
+            #if DEBUG
+            print("Power-up sound unavailable: \(error)")
+            #endif
+        }
     }
 
     // Called after gameplay stops so the game-over cue can finish on the menu.
