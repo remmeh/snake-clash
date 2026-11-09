@@ -521,11 +521,33 @@ final class ArenaScene: SKScene {
 private final class SnakeVisual {
     let root = SKNode()
     private let body = SKNode()
+    private let glowLayer = SKNode()
+    private var glowSegments: [SKSpriteNode] = []
     private let dangerLayer = SKNode()
     private var dangerSegments: [SKSpriteNode] = []
     private var segments: [SKSpriteNode] = []
     private let head = SKSpriteNode()
     private static var textures: [UIColor: SKTexture] = [:]
+    private static var glowTextures: [UIColor: SKTexture] = [:]
+
+    private static func glowTexture(for color: UIColor) -> SKTexture {
+        if let cached = glowTextures[color] { return cached }
+        // Rasterize once per color; no per-frame blur or self-intersecting paths.
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96)).image { context in
+            let colors = [color.withAlphaComponent(0.18).cgColor,
+                          color.withAlphaComponent(0.12).cgColor,
+                          color.withAlphaComponent(0.04).cgColor,
+                          color.withAlphaComponent(0).cgColor] as CFArray
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                      colors: colors, locations: [0, 0.55, 0.78, 1])!
+            context.cgContext.drawRadialGradient(gradient, startCenter: CGPoint(x: 48, y: 48),
+                startRadius: 0, endCenter: CGPoint(x: 48, y: 48), endRadius: 48, options: [])
+        }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .linear
+        glowTextures[color] = texture
+        return texture
+    }
 
     private static func texture(for color: UIColor) -> SKTexture {
         if let cached = textures[color] { return cached }
@@ -543,6 +565,7 @@ private final class SnakeVisual {
     private let shield = SKShapeNode()
 
     init() {
+        glowLayer.zPosition = -2; root.addChild(glowLayer)
         dangerLayer.zPosition = -1; root.addChild(dangerLayer)
         root.addChild(body); root.addChild(head); root.addChild(face); root.addChild(label); root.addChild(shield)
         head.zPosition = 1; face.zPosition = 2; label.zPosition = 3; shield.zPosition = 3
@@ -578,6 +601,24 @@ private final class SnakeVisual {
             // The 2-pixel transparent border keeps antialiasing inside the texture.
             let diameter = snake.radius * 2 * 64 / 60
             segment.size = CGSize(width: diameter, height: diameter)
+        }
+        // Sample the halo more sparsely than the opaque body to bound overdraw.
+        var glowPositions = stride(from: 0, to: indices.count, by: 2).map { segments[$0].position }
+        if let tail = snake.trail.last { glowPositions.append(map(tail)) }
+        glowPositions.append(headPoint)
+        let halo = Self.glowTexture(for: color)
+        while glowSegments.count < glowPositions.count {
+            let glow = SKSpriteNode(texture: halo)
+            glowLayer.addChild(glow); glowSegments.append(glow)
+        }
+        for index in glowSegments.indices {
+            let glow = glowSegments[index]
+            glow.isHidden = index >= glowPositions.count
+            guard index < glowPositions.count else { continue }
+            glow.texture = halo
+            glow.position = glowPositions[index]
+            let diameter = (snake.radius + 10) * 2
+            glow.size = CGSize(width: diameter, height: diameter)
         }
         dangerLayer.isHidden = !dangerous
         if dangerous {
